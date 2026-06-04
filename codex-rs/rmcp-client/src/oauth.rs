@@ -36,6 +36,10 @@ use sha2::Sha256;
 use std::collections::BTreeMap;
 use std::fs;
 use std::io::ErrorKind;
+#[cfg(unix)]
+use std::os::unix::fs::OpenOptionsExt;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -369,11 +373,12 @@ impl OAuthPersistor {
 }
 
 const FALLBACK_FILENAME: &str = ".credentials.json";
+const FALLBACK_LOCK_FILENAME: &str = ".credentials.json.lock";
 const MCP_SERVER_TYPE: &str = "http";
 
 type FallbackFile = BTreeMap<String, FallbackTokenEntry>;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 struct FallbackTokenEntry {
     server_name: String,
     server_url: String,
@@ -387,53 +392,74 @@ struct FallbackTokenEntry {
     scopes: Vec<String>,
 }
 
-fn load_oauth_tokens_from_file(server_name: &str, url: &str) -> Result<Option<StoredOAuthTokens>> {
-    let Some(store) = read_fallback_file()? else {
-        return Ok(None);
-    };
+struct FallbackFileLock {
+    file: fs::File,
+}
 
-    let key = compute_store_key(server_name, url)?;
-
-    for entry in store.values() {
-        let entry_key = compute_store_key(&entry.server_name, &entry.server_url)?;
-        if entry_key != key {
-            continue;
+impl Drop for FallbackFileLock {
+    fn drop(&mut self) {
+        if let Err(error) = self.file.unlock() {
+            warn!("failed to unlock MCP OAuth credentials file: {error}");
         }
-
-        let mut token_response = OAuthTokenResponse::new(
-            AccessToken::new(entry.access_token.clone()),
-            BasicTokenType::Bearer,
-            VendorExtraTokenFields::default(),
-        );
-
-        if let Some(refresh) = entry.refresh_token.clone() {
-            token_response.set_refresh_token(Some(RefreshToken::new(refresh)));
-        }
-
-        let scopes = entry.scopes.clone();
-        if !scopes.is_empty() {
-            token_response.set_scopes(Some(scopes.into_iter().map(Scope::new).collect()));
-        }
-
-        let mut stored = StoredOAuthTokens {
-            server_name: entry.server_name.clone(),
-            url: entry.server_url.clone(),
-            client_id: entry.client_id.clone(),
-            token_response: WrappedOAuthTokenResponse(token_response),
-            expires_at: entry.expires_at,
-        };
-        refresh_expires_in_from_timestamp(&mut stored);
-
-        return Ok(Some(stored));
     }
+}
 
-    Ok(None)
+fn load_oauth_tokens_from_file(server_name: &str, url: &str) -> Result<Option<StoredOAuthTokens>> {
+    with_fallback_file_lock(|| {
+        let Some(store) = read_fallback_file_unlocked()? else {
+            return Ok(None);
+        };
+
+        let key = compute_store_key(server_name, url)?;
+
+        for entry in store.values() {
+            let entry_key = compute_store_key(&entry.server_name, &entry.server_url)?;
+            if entry_key != key {
+                continue;
+            }
+
+            let mut token_response = OAuthTokenResponse::new(
+                AccessToken::new(entry.access_token.clone()),
+                BasicTokenType::Bearer,
+                VendorExtraTokenFields::default(),
+            );
+
+            if let Some(refresh) = entry.refresh_token.clone() {
+                token_response.set_refresh_token(Some(RefreshToken::new(refresh)));
+            }
+
+            let scopes = entry.scopes.clone();
+            if !scopes.is_empty() {
+                token_response.set_scopes(Some(scopes.into_iter().map(Scope::new).collect()));
+            }
+
+            let mut stored = StoredOAuthTokens {
+                server_name: entry.server_name.clone(),
+                url: entry.server_url.clone(),
+                client_id: entry.client_id.clone(),
+                token_response: WrappedOAuthTokenResponse(token_response),
+                expires_at: entry.expires_at,
+            };
+            refresh_expires_in_from_timestamp(&mut stored);
+
+            return Ok(Some(stored));
+        }
+
+        Ok(None)
+    })
 }
 
 fn save_oauth_tokens_to_file(tokens: &StoredOAuthTokens) -> Result<()> {
-    let key = compute_store_key(&tokens.server_name, &tokens.url)?;
-    let mut store = read_fallback_file()?.unwrap_or_default();
+    with_fallback_file_lock(|| {
+        let key = compute_store_key(&tokens.server_name, &tokens.url)?;
+        let mut store = read_fallback_file_unlocked()?.unwrap_or_default();
 
+        store.insert(key, fallback_entry_from_tokens(tokens));
+        write_fallback_file_unlocked(&store)
+    })
+}
+
+fn fallback_entry_from_tokens(tokens: &StoredOAuthTokens) -> FallbackTokenEntry {
     let token_response = &tokens.token_response.0;
     let expires_at = tokens
         .expires_at
@@ -445,7 +471,7 @@ fn save_oauth_tokens_to_file(tokens: &StoredOAuthTokens) -> Result<()> {
         .scopes()
         .map(|s| s.iter().map(|s| s.to_string()).collect())
         .unwrap_or_default();
-    let entry = FallbackTokenEntry {
+    FallbackTokenEntry {
         server_name: tokens.server_name.clone(),
         server_url: tokens.url.clone(),
         client_id: tokens.client_id.clone(),
@@ -453,25 +479,24 @@ fn save_oauth_tokens_to_file(tokens: &StoredOAuthTokens) -> Result<()> {
         expires_at,
         refresh_token,
         scopes,
-    };
-
-    store.insert(key, entry);
-    write_fallback_file(&store)
+    }
 }
 
 fn delete_oauth_tokens_from_file(key: &str) -> Result<bool> {
-    let mut store = match read_fallback_file()? {
-        Some(store) => store,
-        None => return Ok(false),
-    };
+    with_fallback_file_lock(|| {
+        let mut store = match read_fallback_file_unlocked()? {
+            Some(store) => store,
+            None => return Ok(false),
+        };
 
-    let removed = store.remove(key).is_some();
+        let removed = store.remove(key).is_some();
 
-    if removed {
-        write_fallback_file(&store)?;
-    }
+        if removed {
+            write_fallback_file_unlocked(&store)?;
+        }
 
-    Ok(removed)
+        Ok(removed)
+    })
 }
 
 pub(crate) fn compute_expires_at_millis(response: &OAuthTokenResponse) -> Option<u64> {
@@ -531,7 +556,51 @@ fn fallback_file_path() -> Result<PathBuf> {
     Ok(find_codex_home()?.join(FALLBACK_FILENAME).to_path_buf())
 }
 
-fn read_fallback_file() -> Result<Option<FallbackFile>> {
+fn with_fallback_file_lock<T>(operation: impl FnOnce() -> Result<T>) -> Result<T> {
+    let path = find_codex_home()?
+        .join(FALLBACK_LOCK_FILENAME)
+        .to_path_buf();
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).with_context(|| {
+            format!(
+                "failed to create credentials lock directory at {}",
+                parent.display()
+            )
+        })?;
+    }
+
+    let mut options = fs::OpenOptions::new();
+    options.read(true).write(true).create(true).truncate(false);
+    #[cfg(unix)]
+    {
+        options.mode(0o600);
+    }
+
+    let file = options
+        .open(&path)
+        .with_context(|| format!("failed to open credentials lock file at {}", path.display()))?;
+    #[cfg(unix)]
+    {
+        let perms = fs::Permissions::from_mode(0o600);
+        file.set_permissions(perms).with_context(|| {
+            format!(
+                "failed to set credentials lock file permissions at {}",
+                path.display()
+            )
+        })?;
+    }
+    file.lock().with_context(|| {
+        format!(
+            "failed to lock MCP OAuth credentials file at {}",
+            path.display()
+        )
+    })?;
+    let _lock = FallbackFileLock { file };
+
+    operation()
+}
+
+fn read_fallback_file_unlocked() -> Result<Option<FallbackFile>> {
     let path = fallback_file_path()?;
     let contents = match fs::read_to_string(&path) {
         Ok(contents) => contents,
@@ -553,7 +622,7 @@ fn read_fallback_file() -> Result<Option<FallbackFile>> {
     }
 }
 
-fn write_fallback_file(store: &FallbackFile) -> Result<()> {
+fn write_fallback_file_unlocked(store: &FallbackFile) -> Result<()> {
     let path = fallback_file_path()?;
 
     if store.is_empty() {
@@ -572,7 +641,6 @@ fn write_fallback_file(store: &FallbackFile) -> Result<()> {
 
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
         let perms = fs::Permissions::from_mode(0o600);
         fs::set_permissions(&path, perms)?;
     }
@@ -597,6 +665,8 @@ mod tests {
     use anyhow::Result;
     use keyring::Error as KeyringError;
     use pretty_assertions::assert_eq;
+    use std::sync::Arc;
+    use std::sync::Barrier;
     use std::sync::Mutex;
     use std::sync::MutexGuard;
     use std::sync::OnceLock;
@@ -731,7 +801,7 @@ mod tests {
 
         let fallback_path = super::fallback_file_path()?;
         assert!(fallback_path.exists(), "fallback file should be created");
-        let saved = super::read_fallback_file()?.expect("fallback file should load");
+        let saved = super::read_fallback_file_unlocked()?.expect("fallback file should load");
         let key = super::compute_store_key(&tokens.server_name, &tokens.url)?;
         let entry = saved.get(&key).expect("entry for key");
         assert_eq!(entry.server_name, tokens.server_name);
@@ -742,6 +812,40 @@ mod tests {
             tokens.token_response.0.access_token().secret().as_str()
         );
         assert!(store.saved_value(&key).is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn save_oauth_tokens_to_file_preserves_concurrent_server_entries() -> Result<()> {
+        let _env = TempCodexHome::new();
+        const SERVER_COUNT: usize = 16;
+
+        let barrier = Arc::new(Barrier::new(SERVER_COUNT));
+        let mut expected = FallbackFile::new();
+        let mut handles = Vec::new();
+
+        for index in 0..SERVER_COUNT {
+            let tokens = sample_tokens_for(
+                &format!("sentry-{index}"),
+                "https://mcp.sentry.dev/mcp",
+                &format!("access-token-{index}"),
+            );
+            let key = super::compute_store_key(&tokens.server_name, &tokens.url)?;
+            expected.insert(key, super::fallback_entry_from_tokens(&tokens));
+
+            let barrier = Arc::clone(&barrier);
+            handles.push(std::thread::spawn(move || -> Result<()> {
+                barrier.wait();
+                super::save_oauth_tokens_to_file(&tokens)
+            }));
+        }
+
+        for handle in handles {
+            handle.join().expect("worker thread should not panic")?;
+        }
+
+        let saved = super::read_fallback_file_unlocked()?.expect("fallback file should load");
+        assert_eq!(saved, expected);
         Ok(())
     }
 
@@ -888,8 +992,12 @@ mod tests {
     }
 
     fn sample_tokens() -> StoredOAuthTokens {
+        sample_tokens_for("test-server", "https://example.test", "access-token")
+    }
+
+    fn sample_tokens_for(server_name: &str, url: &str, access_token: &str) -> StoredOAuthTokens {
         let mut response = OAuthTokenResponse::new(
-            AccessToken::new("access-token".to_string()),
+            AccessToken::new(access_token.to_string()),
             BasicTokenType::Bearer,
             VendorExtraTokenFields::default(),
         );
@@ -903,8 +1011,8 @@ mod tests {
         let expires_at = super::compute_expires_at_millis(&response);
 
         StoredOAuthTokens {
-            server_name: "test-server".to_string(),
-            url: "https://example.test".to_string(),
+            server_name: server_name.to_string(),
+            url: url.to_string(),
             client_id: "client-id".to_string(),
             token_response: WrappedOAuthTokenResponse(response),
             expires_at,
