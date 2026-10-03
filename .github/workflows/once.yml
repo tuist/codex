@@ -149,6 +149,10 @@ jobs:
             cp ../overlay/overlay/tuist-once.toml tuist.toml
           fi
           echo "CODEX_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+      - name: Authenticate the tuist CLI
+        if: inputs.remote_cache
+        working-directory: codex
+        run: tuist auth login
       - name: Point the underlying Bazel at the Tuist remote cache
         if: inputs.remote_cache
         working-directory: codex
@@ -162,7 +166,7 @@ jobs:
           if [ -f .bazelrc.tuist ] && ! grep -q 'try-import %workspace%/.bazelrc.tuist' .bazelrc; then
             echo 'try-import %workspace%/.bazelrc.tuist' >> .bazelrc
           fi
-      - name: Authenticate with Tuist
+      - name: Authenticate Once with Tuist
         if: inputs.remote_cache
         working-directory: codex
         run: once auth login --provider tuist --no-browser
