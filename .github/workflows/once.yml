@@ -44,6 +44,7 @@ permissions: {}
 env:
   ONCE_VERSION: 0.62.3
   BAZELISK_VERSION: 1.29.0
+  TUIST_VERSION: 4.210.0
 
 jobs:
   once:
@@ -106,6 +107,23 @@ jobs:
           gh release download "${ONCE_VERSION}" -R tuist/once \
             -p "once-${ONCE_VERSION}-${triple}.tar.gz" -O - | tar xz -C "${RUNNER_TEMP}/once"
           echo "${RUNNER_TEMP}/once" >> "$GITHUB_PATH"
+      - name: Install tuist
+        run: |
+          set -euo pipefail
+          case "${RUNNER_OS}-${RUNNER_ARCH}" in
+            Linux-X64) asset=tuist-linux-x86_64.tar.gz ;;
+            Linux-ARM64) asset=tuist-linux-aarch64.tar.gz ;;
+            macOS-*) asset=tuist.zip ;;
+          esac
+          mkdir -p "${RUNNER_TEMP}/tuist"
+          curl -fsSL "https://github.com/tuist/tuist/releases/download/${TUIST_VERSION}/${asset}" \
+            -o "${RUNNER_TEMP}/tuist/${asset}"
+          case "${asset}" in
+            *.zip) unzip -o -q "${RUNNER_TEMP}/tuist/${asset}" -d "${RUNNER_TEMP}/tuist" ;;
+            *) tar xzf "${RUNNER_TEMP}/tuist/${asset}" -C "${RUNNER_TEMP}/tuist" ;;
+          esac
+          chmod +x "${RUNNER_TEMP}/tuist/tuist"
+          echo "${RUNNER_TEMP}/tuist" >> "$GITHUB_PATH"
       - name: Install DotSlash and just
         uses: facebook/install-dotslash@v2
       - uses: taiki-e/install-action@v2
@@ -122,8 +140,16 @@ jobs:
           set -euo pipefail
           if [ "${REMOTE_CACHE}" = "true" ]; then
             cp ../overlay/overlay/once.toml once.toml
+            cp ../overlay/overlay/tuist-once.toml tuist.toml
           fi
           echo "CODEX_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+      - name: Point the underlying Bazel at the Tuist remote cache
+        if: inputs.remote_cache
+        working-directory: codex
+        continue-on-error: true
+        # Once delegates Bazel action caching to Bazel, so configure the
+        # remote cache without build insights: the Once run is the insight.
+        run: tuist bazel setup --no-build-insights
       - name: Load the graph
         working-directory: codex
         run: |
