@@ -183,7 +183,7 @@ jobs:
         run: |
           set -o pipefail
           start=$(date +%s)
-          once --color never build "${{ inputs.build_target }}" 2>&1 | tee "${RUNNER_TEMP}/build.log"
+          once build "${{ inputs.build_target }}" 2>&1 | tee "${RUNNER_TEMP}/build.log"
           echo "BUILD_SECONDS=$(( $(date +%s) - start ))" >> "$GITHUB_ENV"
       - name: once test
         working-directory: codex
@@ -191,7 +191,7 @@ jobs:
           set -o pipefail
           start=$(date +%s)
           status=0
-          once --color never test "${{ inputs.test_target }}" 2>&1 | tee "${RUNNER_TEMP}/test.log" || status=$?
+          once test "${{ inputs.test_target }}" 2>&1 | tee "${RUNNER_TEMP}/test.log" || status=$?
           echo "TEST_SECONDS=$(( $(date +%s) - start ))" >> "$GITHUB_ENV"
           echo "TEST_STATUS=${status}" >> "$GITHUB_ENV"
       - name: Summarize

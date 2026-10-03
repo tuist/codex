@@ -9,6 +9,7 @@ from pathlib import Path
 
 # Once renders one line per action: "  <glyph> <target> <status> <duration>".
 ONCE_ACTION = re.compile(r"^\s+[✓✗]\s+(\S+)\s+(\S+)\s+(\S+)\s*$")
+ANSI = re.compile(r"\x1b\[[0-9;]*m")
 # Bazel prints "//pkg:target    (cached) " or with a mnemonic suffix.
 BAZEL_TARGET = re.compile(r"^(\S+)\s+(\(cached\)|\(cache hit\)|\(remote cache hit\))")
 BAZEL_ELAPSED = re.compile(r"^INFO: Elapsed time: ([\d.]+)s")
@@ -31,7 +32,7 @@ def parse_once(path):
         return {"statuses": {}, "action_seconds": {}, "slowest": [], "trailer": None, "cache_hits": 0}
     trailer = None
     cache_hits = 0
-    for line in log.read_text(errors="replace").splitlines():
+    for line in ANSI.sub("", log.read_text(errors="replace")).splitlines():
         match = ONCE_ACTION.match(line)
         if match:
             name, status, duration = match.groups()
