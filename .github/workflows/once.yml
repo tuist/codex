@@ -149,7 +149,13 @@ jobs:
         continue-on-error: true
         # Once delegates Bazel action caching to Bazel, so configure the
         # remote cache without build insights: the Once run is the insight.
-        run: tuist bazel setup --no-build-insights
+        run: |
+          tuist bazel setup --no-build-insights
+          # See codex-bazel.yml: codex's inactive buildbuddy-* configs make
+          # `tuist bazel setup` skip the import, so add it explicitly.
+          if [ -f .bazelrc.tuist ] && ! grep -q 'try-import %workspace%/.bazelrc.tuist' .bazelrc; then
+            echo 'try-import %workspace%/.bazelrc.tuist' >> .bazelrc
+          fi
       - name: Load the graph
         working-directory: codex
         run: |

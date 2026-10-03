@@ -134,6 +134,12 @@ jobs:
         continue-on-error: true
         run: |
           tuist bazel setup
+          # `tuist bazel setup` refuses to add the import when the repository
+          # already mentions --remote_cache inside a named config. Codex has the
+          # inactive buildbuddy-* configs, so import Tuist explicitly.
+          if [ -f .bazelrc.tuist ] && ! grep -q 'try-import %workspace%/.bazelrc.tuist' .bazelrc; then
+            echo 'try-import %workspace%/.bazelrc.tuist' >> .bazelrc
+          fi
       - name: Warn when the Tuist remote cache is unavailable
         if: inputs.remote_cache && hashFiles('codex/.bazelrc.tuist') == ''
         run: echo "::warning::Tuist remote cache unavailable (.bazelrc.tuist not written); building cold against the local cache."
