@@ -72,7 +72,6 @@ jobs:
           path: overlay
           sparse-checkout: |
             overlay
-            scripts
           persist-credentials: false
       - name: Check out openai/codex
         uses: actions/checkout@v6
@@ -175,19 +174,34 @@ jobs:
         env:
           REMOTE_CACHE: ${{ inputs.remote_cache }}
         run: |
-          python3 overlay/scripts/summarize.py --tool bazel \
-            --os "${{ matrix.os }}" --sha "${CODEX_SHA:-unknown}" --remote-cache "${REMOTE_CACHE}" \
-            --build-seconds "${BUILD_SECONDS:-}" --test-seconds "${TEST_SECONDS:-}" \
-            --test-status "${TEST_STATUS:-}" \
-            --build-log "${RUNNER_TEMP}/build.log" --test-log "${RUNNER_TEMP}/test.log" \
-            --json "${RUNNER_TEMP}/summary.json" >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo "## Bazel on \`${{ matrix.os }}\` for openai/codex@${CODEX_SHA:0:10}"
+            echo
+            echo "Remote cache: **${REMOTE_CACHE}**"
+            echo
+            echo "| Phase | Wall time |"
+            echo "| --- | --- |"
+            echo "| \`bazel build\` | ${BUILD_SECONDS:-0}s |"
+            echo "| \`bazel test\` | ${TEST_SECONDS:-0}s |"
+            if [ -n "${TEST_STATUS:-}" ] && [ "${TEST_STATUS}" != "0" ]; then
+              echo
+              echo "\`bazel test\` exited with status ${TEST_STATUS}."
+            fi
+            echo
+            echo "<details><summary>Bazel summary</summary>"
+            echo
+            echo '```'
+            grep -aE 'INFO: (Elapsed time|[0-9]+ processes:)' "${RUNNER_TEMP}/build.log" "${RUNNER_TEMP}/test.log" 2>/dev/null | tail -10 || true
+            echo '```'
+            echo
+            echo "</details>"
+          } >> "$GITHUB_STEP_SUMMARY"
       - name: Upload logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: bazel-${{ matrix.os }}
           path: |
-            ${{ runner.temp }}/summary.json
             ${{ runner.temp }}/build.log
             ${{ runner.temp }}/test.log
           if-no-files-found: ignore

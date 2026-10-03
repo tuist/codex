@@ -73,7 +73,6 @@ jobs:
           path: overlay
           sparse-checkout: |
             overlay
-            scripts
           persist-credentials: false
       - name: Check out openai/codex
         uses: actions/checkout@v6
@@ -199,19 +198,35 @@ jobs:
         env:
           REMOTE_CACHE: ${{ inputs.remote_cache }}
         run: |
-          python3 overlay/scripts/summarize.py --tool once \
-            --os "${{ matrix.os }}" --sha "${CODEX_SHA:-unknown}" --remote-cache "${REMOTE_CACHE}" \
-            --graph-seconds "${GRAPH_SECONDS:-}" --build-seconds "${BUILD_SECONDS:-}" \
-            --test-seconds "${TEST_SECONDS:-}" --test-status "${TEST_STATUS:-}" \
-            --build-log "${RUNNER_TEMP}/build.log" --test-log "${RUNNER_TEMP}/test.log" \
-            --json "${RUNNER_TEMP}/summary.json" >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo "## Once on \`${{ matrix.os }}\` for openai/codex@${CODEX_SHA:0:10}"
+            echo
+            echo "Remote cache: **${REMOTE_CACHE}**"
+            echo
+            echo "| Phase | Wall time |"
+            echo "| --- | --- |"
+            echo "| Graph load | ${GRAPH_SECONDS:-0}s |"
+            echo "| \`once build\` | ${BUILD_SECONDS:-0}s |"
+            echo "| \`once test\` | ${TEST_SECONDS:-0}s |"
+            if [ -n "${TEST_STATUS:-}" ] && [ "${TEST_STATUS}" != "0" ]; then
+              echo
+              echo "\`once test\` exited with status ${TEST_STATUS}."
+            fi
+            echo
+            echo "<details><summary>Once actions</summary>"
+            echo
+            echo '```'
+            grep -aE '[✓✗]|^once: (build|test)|^[[:space:]]+(Done|Failed)' "${RUNNER_TEMP}/build.log" "${RUNNER_TEMP}/test.log" 2>/dev/null | tail -30 || true
+            echo '```'
+            echo
+            echo "</details>"
+          } >> "$GITHUB_STEP_SUMMARY"
       - name: Upload logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: once-${{ matrix.os }}
           path: |
-            ${{ runner.temp }}/summary.json
             ${{ runner.temp }}/build.log
             ${{ runner.temp }}/test.log
             ${{ runner.temp }}/targets.txt
