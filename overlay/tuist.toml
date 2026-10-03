@@ -1,0 +1,6 @@
+# Copied into the openai/codex checkout by .github/workflows/bazel.yml.
+# Points `tuist bazel setup` at the Tuist project that owns the remote cache
+# entries and the Bazel build-event stream for the plain-Bazel experiment.
+
+project = "tuist/codex-bazel"
+url = "https://tuist.dev"

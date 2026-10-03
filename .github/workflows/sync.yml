@@ -1,0 +1,76 @@
+name: sync
+
+# Every four hours: keep `main` an exact mirror of openai/codex, then build and
+# test the latest upstream commit with Bazel and with Once. This branch
+# (`tuist`) is the default branch and only holds the experiment, so upstream's
+# own workflows never run in this fork.
+
+on:
+  schedule:
+    - cron: "23 */4 * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      actions: write
+    outputs:
+      sha: ${{ steps.upstream.outputs.sha }}
+    steps:
+      - name: Resolve the latest openai/codex commit
+        id: upstream
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: echo "sha=$(gh api repos/openai/codex/branches/main -q .commit.sha)" >> "$GITHUB_OUTPUT"
+      # GITHUB_TOKEN cannot fast-forward over upstream workflow file changes,
+      # so this needs SYNC_TOKEN (Contents and Workflows write). A failed sync
+      # does not block the builds below, which check out openai/codex directly.
+      - name: Fast-forward main from openai/codex
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.SYNC_TOKEN || github.token }}
+        run: |
+          set -euo pipefail
+          before="$(gh api repos/${{ github.repository }}/branches/main -q .commit.sha)"
+          gh api -X POST repos/${{ github.repository }}/merge-upstream -f branch=main
+          after="$(gh api repos/${{ github.repository }}/branches/main -q .commit.sha)"
+          echo "main: ${before} -> ${after}"
+      # Upstream workflows that reach this fork through main stay disabled.
+      - name: Disable upstream workflows
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh api --paginate repos/${{ github.repository }}/actions/workflows \
+            -q '.workflows[] | select(.state == "active") | select(.path | test("^\\.github/workflows/(sync|once|bazel)\\.yml$") | not) | "\(.id)\t\(.path)"' |
+            while IFS=$'\t' read -r id path; do
+              echo "Disabling ${path}"
+              gh api -X PUT "repos/${{ github.repository }}/actions/workflows/${id}/disable" || true
+            done
+
+  bazel:
+    needs: sync
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/bazel.yml
+    with:
+      ref: ${{ needs.sync.outputs.sha }}
+
+  once:
+    needs: sync
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/once.yml
+    with:
+      ref: ${{ needs.sync.outputs.sha }}
