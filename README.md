@@ -19,7 +19,7 @@ its cache and insights can be compared:
   builds and tests the latest upstream commit with both toolchains. The
   fast-forward needs a `SYNC_TOKEN` secret (Contents and Workflows write)
   because `GITHUB_TOKEN` cannot push upstream workflow file changes.
-- `.github/workflows/bazel.yml` checks out an openai/codex commit, writes
+- `.github/workflows/codex-bazel.yml` checks out an openai/codex commit, writes
   `overlay/tuist.toml`, runs `tuist bazel setup`, and then `bazel build` and
   `bazel test`. Run it manually with a `ref` to replay any upstream commit, and
   with `remote_cache: false` for a cold baseline.

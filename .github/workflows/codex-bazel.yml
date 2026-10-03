@@ -1,0 +1,179 @@
+name: bazel
+
+# Builds and tests an openai/codex commit with plain Bazel, using the
+# tuist/codex-bazel Tuist project for the remote cache and build insights
+# through the Build Event Service. This is the baseline the Once workflow is
+# compared against.
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        type: string
+        required: true
+      remote_cache:
+        type: boolean
+        default: true
+      build_target:
+        type: string
+        default: //codex-rs/cli:codex
+      test_target:
+        type: string
+        default: //codex-rs/apply-patch:apply-patch-unit-tests
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: openai/codex commit, branch, or tag to build (defaults to main)
+        type: string
+        default: main
+      remote_cache:
+        description: Use the Tuist remote cache (disable for a cold baseline)
+        type: boolean
+        default: true
+      build_target:
+        description: Bazel target to build
+        type: string
+        default: //codex-rs/cli:codex
+      test_target:
+        description: Bazel target to test
+        type: string
+        default: //codex-rs/apply-patch:apply-patch-unit-tests
+
+permissions: {}
+
+env:
+  TUIST_VERSION: 4.210.0
+  BAZELISK_VERSION: 1.29.0
+
+jobs:
+  bazel:
+    name: bazel (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 180
+    permissions:
+      contents: read
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15]
+    steps:
+      - name: Check out the Bazel overlay
+        uses: actions/checkout@v6
+        with:
+          path: overlay
+          sparse-checkout: |
+            overlay
+            scripts
+          persist-credentials: false
+      - name: Check out openai/codex
+        uses: actions/checkout@v6
+        with:
+          repository: openai/codex
+          ref: ${{ inputs.ref }}
+          path: codex
+          persist-credentials: false
+      - name: Install Bazelisk
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          case "${RUNNER_OS}-${RUNNER_ARCH}" in
+            Linux-X64) asset=bazelisk-linux-amd64 ;;
+            Linux-ARM64) asset=bazelisk-linux-arm64 ;;
+            macOS-ARM64) asset=bazelisk-darwin-arm64 ;;
+            macOS-X64) asset=bazelisk-darwin-amd64 ;;
+          esac
+          mkdir -p "${RUNNER_TEMP}/tools"
+          gh release download "v${BAZELISK_VERSION}" -R bazelbuild/bazelisk \
+            -p "${asset}" -O "${RUNNER_TEMP}/tools/bazel"
+          chmod +x "${RUNNER_TEMP}/tools/bazel"
+          echo "${RUNNER_TEMP}/tools" >> "$GITHUB_PATH"
+      - name: Install tuist
+        run: |
+          set -euo pipefail
+          case "${RUNNER_OS}-${RUNNER_ARCH}" in
+            Linux-X64) asset=tuist-linux-x86_64.tar.gz ;;
+            Linux-ARM64) asset=tuist-linux-aarch64.tar.gz ;;
+            macOS-*) asset=tuist.zip ;;
+          esac
+          mkdir -p "${RUNNER_TEMP}/tuist"
+          curl -fsSL "https://github.com/tuist/tuist/releases/download/${TUIST_VERSION}/${asset}" \
+            -o "${RUNNER_TEMP}/tuist/${asset}"
+          case "${asset}" in
+            *.zip) unzip -o -q "${RUNNER_TEMP}/tuist/${asset}" -d "${RUNNER_TEMP}/tuist" ;;
+            *) tar xzf "${RUNNER_TEMP}/tuist/${asset}" -C "${RUNNER_TEMP}/tuist" ;;
+          esac
+          chmod +x "${RUNNER_TEMP}/tuist/tuist"
+          echo "${RUNNER_TEMP}/tuist" >> "$GITHUB_PATH"
+      - name: Install DotSlash and just
+        uses: facebook/install-dotslash@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just
+      - name: Install C/C++ toolchain (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends build-essential clang cmake pkg-config
+      - name: Apply the overlay
+        working-directory: codex
+        env:
+          REMOTE_CACHE: ${{ inputs.remote_cache }}
+        run: |
+          set -euo pipefail
+          if [ "${REMOTE_CACHE}" = "true" ]; then
+            cp ../overlay/overlay/tuist.toml tuist.toml
+          fi
+          echo "CODEX_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+      - name: Set up the Tuist remote cache
+        if: inputs.remote_cache
+        working-directory: codex
+        # Remote cache is best-effort: if auth or setup fails the build runs cold
+        # against the local cache rather than blocking the experiment.
+        continue-on-error: true
+        run: |
+          tuist auth login
+          tuist bazel setup
+      - name: Warn when the Tuist remote cache is unavailable
+        if: inputs.remote_cache && hashFiles('codex/.bazelrc.tuist') == ''
+        run: echo "::warning::Tuist remote cache unavailable (.bazelrc.tuist not written); building cold against the local cache."
+      - name: bazel build
+        working-directory: codex
+        run: |
+          set -o pipefail
+          start=$(date +%s)
+          bazel --color=no build --config=ci \
+            --bes_upload_mode=wait_for_upload_complete \
+            "${{ inputs.build_target }}" 2>&1 | tee "${RUNNER_TEMP}/build.log"
+          echo "BUILD_SECONDS=$(( $(date +%s) - start ))" >> "$GITHUB_ENV"
+      - name: bazel test
+        working-directory: codex
+        run: |
+          set -o pipefail
+          start=$(date +%s)
+          status=0
+          bazel --color=no test --config=ci \
+            --bes_upload_mode=wait_for_upload_complete \
+            "${{ inputs.test_target }}" 2>&1 | tee "${RUNNER_TEMP}/test.log" || status=$?
+          echo "TEST_SECONDS=$(( $(date +%s) - start ))" >> "$GITHUB_ENV"
+          echo "TEST_STATUS=${status}" >> "$GITHUB_ENV"
+      - name: Summarize
+        if: always()
+        env:
+          REMOTE_CACHE: ${{ inputs.remote_cache }}
+        run: |
+          python3 overlay/scripts/summarize.py --tool bazel \
+            --os "${{ matrix.os }}" --sha "${CODEX_SHA:-unknown}" --remote-cache "${REMOTE_CACHE}" \
+            --build-seconds "${BUILD_SECONDS:-}" --test-seconds "${TEST_SECONDS:-}" \
+            --test-status "${TEST_STATUS:-}" \
+            --build-log "${RUNNER_TEMP}/build.log" --test-log "${RUNNER_TEMP}/test.log" \
+            --json "${RUNNER_TEMP}/summary.json" >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bazel-${{ matrix.os }}
+          path: |
+            ${{ runner.temp }}/summary.json
+            ${{ runner.temp }}/build.log
+            ${{ runner.temp }}/test.log
+          if-no-files-found: ignore
