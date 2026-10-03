@@ -141,7 +141,7 @@ jobs:
         run: |
           set -o pipefail
           start=$(date +%s)
-          bazel --color=no build --config=ci \
+          bazel build --config=ci --color=no \
             --bes_upload_mode=wait_for_upload_complete \
             "${{ inputs.build_target }}" 2>&1 | tee "${RUNNER_TEMP}/build.log"
           echo "BUILD_SECONDS=$(( $(date +%s) - start ))" >> "$GITHUB_ENV"
@@ -151,7 +151,7 @@ jobs:
           set -o pipefail
           start=$(date +%s)
           status=0
-          bazel --color=no test --config=ci \
+          bazel test --config=ci --color=no \
             --bes_upload_mode=wait_for_upload_complete \
             "${{ inputs.test_target }}" 2>&1 | tee "${RUNNER_TEMP}/test.log" || status=$?
           echo "TEST_SECONDS=$(( $(date +%s) - start ))" >> "$GITHUB_ENV"
