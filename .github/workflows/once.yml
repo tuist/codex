@@ -53,6 +53,8 @@ jobs:
     permissions:
       contents: read
       id-token: write
+    env:
+      TUIST_TOKEN: ${{ secrets.TUIST_TOKEN }}
     strategy:
       fail-fast: false
       matrix:
@@ -122,10 +124,6 @@ jobs:
             cp ../overlay/overlay/once.toml once.toml
           fi
           echo "CODEX_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
-      - name: Authenticate with Tuist
-        if: inputs.remote_cache
-        working-directory: codex
-        run: once auth login --provider tuist --no-browser
       - name: Load the graph
         working-directory: codex
         run: |

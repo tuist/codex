@@ -63,6 +63,7 @@ jobs:
       contents: read
       id-token: write
     uses: ./.github/workflows/codex-bazel.yml
+    secrets: inherit
     with:
       ref: ${{ needs.sync.outputs.sha }}
 
@@ -72,5 +73,6 @@ jobs:
       contents: read
       id-token: write
     uses: ./.github/workflows/once.yml
+    secrets: inherit
     with:
       ref: ${{ needs.sync.outputs.sha }}

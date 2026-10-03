@@ -53,6 +53,8 @@ jobs:
     permissions:
       contents: read
       id-token: write
+    env:
+      TUIST_TOKEN: ${{ secrets.TUIST_TOKEN }}
     strategy:
       fail-fast: false
       matrix:
@@ -131,7 +133,6 @@ jobs:
         # against the local cache rather than blocking the experiment.
         continue-on-error: true
         run: |
-          tuist auth login
           tuist bazel setup
       - name: Warn when the Tuist remote cache is unavailable
         if: inputs.remote_cache && hashFiles('codex/.bazelrc.tuist') == ''

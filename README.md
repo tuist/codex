@@ -18,7 +18,8 @@ its cache and insights can be compared:
   from openai/codex, disables the upstream workflows that arrive with it, and
   builds and tests the latest upstream commit with both toolchains. The
   fast-forward needs a `SYNC_TOKEN` secret (Contents and Workflows write)
-  because `GITHUB_TOKEN` cannot push upstream workflow file changes.
+  because `GITHUB_TOKEN` cannot push upstream workflow file changes; without it
+  the builds still run against the upstream commit.
 - `.github/workflows/codex-bazel.yml` checks out an openai/codex commit, writes
   `overlay/tuist.toml`, runs `tuist bazel setup`, and then `bazel build` and
   `bazel test`. Run it manually with a `ref` to replay any upstream commit, and
@@ -26,6 +27,10 @@ its cache and insights can be compared:
 - `.github/workflows/once.yml` checks out an openai/codex commit, adds
   `overlay/once.toml`, and runs `once build` and `once test`. The shared cache
   and run reporting go to the `tuist/codex-once` Tuist project.
+
+Both build workflows authenticate to Tuist with a `TUIST_TOKEN` secret: an
+account token for the `tuist` account with the `ci` scope. Without it the Once
+run has no cache provider and Bazel falls back to a cold local build.
 
 Upstream workflows are disabled in this fork so nothing from openai/codex's
 release or deploy automation runs here.
