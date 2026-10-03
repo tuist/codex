@@ -14,6 +14,10 @@ on:
       remote_cache:
         type: boolean
         default: true
+      include_macos:
+        description: Add the macos-14 leg (needs GitHub-hosted macOS capacity on the fork)
+        type: boolean
+        default: false
       build_target:
         type: string
         default: //codex-rs/cli:codex
@@ -30,6 +34,10 @@ on:
         description: Use the Tuist remote cache (disable for a cold baseline)
         type: boolean
         default: true
+      include_macos:
+        description: Add the macos-14 leg (needs GitHub-hosted macOS capacity on the fork)
+        type: boolean
+        default: false
       build_target:
         description: Bazel target to build
         type: string
@@ -58,7 +66,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, macos-14]
+        os: ${{ fromJSON(inputs.include_macos && '["ubuntu-24.04", "macos-14"]' || '["ubuntu-24.04"]') }}
     steps:
       - name: Check out the Bazel overlay
         uses: actions/checkout@v6

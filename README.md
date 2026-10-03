@@ -32,5 +32,9 @@ Both build workflows authenticate to Tuist with a `TUIST_TOKEN` secret: an
 account token for the `tuist` account with the `ci` scope. Without it the Once
 run has no cache provider and Bazel falls back to a cold local build.
 
+Both workflows only run the `ubuntu-24.04` leg by default. Pass
+`include_macos: true` to add a `macos-14` leg when GitHub-hosted macOS capacity
+is available to the fork.
+
 Upstream workflows are disabled in this fork so nothing from openai/codex's
 release or deploy automation runs here.
