@@ -59,7 +59,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, macos-15]
+        os: [ubuntu-24.04, macos-14]
     steps:
       - name: Check out the Once overlay
         uses: actions/checkout@v6
