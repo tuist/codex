@@ -28,9 +28,10 @@ its cache and insights can be compared:
   `overlay/once.toml`, and runs `once build` and `once test`. The shared cache
   and run reporting go to the `tuist/codex-once` Tuist project.
 
-Both build workflows authenticate to Tuist with a `TUIST_TOKEN` secret: an
-account token for the `tuist` account with the `ci` scope. Without it the Once
-run has no cache provider and Bazel falls back to a cold local build.
+Both build workflows authenticate to Tuist with GitHub OpenID Connect
+(`id-token: write`), so no long-lived secret is needed. The `tuist/codex`
+repository is connected to both Tuist projects, which is what the OIDC exchange
+uses to resolve them.
 
 Both workflows only run the `ubuntu-24.04` leg by default. Pass
 `include_macos: true` to add a `macos-14` leg when GitHub-hosted macOS capacity
