@@ -20,10 +20,10 @@ on:
         default: false
       build_target:
         type: string
-        default: bz_codex-rs_cli_codex
+        default: bz_codex-rs_ansi-escape_ansi-escape
       test_target:
         type: string
-        default: bz_codex-rs_apply-patch_apply-patch-unit-tests
+        default: bz_codex-rs_ansi-escape_ansi-escape-unit-tests
   workflow_dispatch:
     inputs:
       ref:
@@ -41,11 +41,11 @@ on:
       build_target:
         description: Once target id to build
         type: string
-        default: bz_codex-rs_cli_codex
+        default: bz_codex-rs_ansi-escape_ansi-escape
       test_target:
         description: Once target id to test
         type: string
-        default: bz_codex-rs_apply-patch_apply-patch-unit-tests
+        default: bz_codex-rs_ansi-escape_ansi-escape-unit-tests
 
 permissions: {}
 

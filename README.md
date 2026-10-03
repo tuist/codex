@@ -36,5 +36,12 @@ Both workflows only run the `ubuntu-24.04` leg by default. Pass
 `include_macos: true` to add a `macos-14` leg when GitHub-hosted macOS capacity
 is available to the fork.
 
+Once derives the same Bazel graph, but its Bazel ownership path runs
+`bazel aquery deps(<label>)` for every target. That analysis currently fails for
+the larger codex targets (`//codex-rs/cli:codex`, `//codex-rs/apply-patch:...`),
+so the Once defaults build a leaf crate (`//codex-rs/ansi-escape`) while the
+Bazel defaults build the `codex` binary. Override `build_target` and
+`test_target` to try other targets.
+
 Upstream workflows are disabled in this fork so nothing from openai/codex's
 release or deploy automation runs here.
