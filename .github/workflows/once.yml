@@ -106,7 +106,7 @@ jobs:
           cargo --version
       - name: Install C/C++ build tools (Linux)
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends build-essential clang cmake pkg-config libssl-dev
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends build-essential clang cmake pkg-config libssl-dev libdbus-1-dev
       - name: Apply the overlay
         working-directory: codex
         env:
