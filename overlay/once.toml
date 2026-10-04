@@ -1,6 +1,6 @@
-# Copied into the openai/codex checkout by .github/workflows/once.yml.
-# Once derives the build graph from the Bazel workspace; this file only
-# points the shared cache and run reporting at the tuist/codex-once project.
+# Copied into the codex-rs Cargo workspace by .github/workflows/once.yml.
+# Once derives the build graph from Cargo, so this file only points the shared
+# cache and run reporting at the tuist/codex-once project.
 
 [infrastructure.cache]
 provider = "tuist"

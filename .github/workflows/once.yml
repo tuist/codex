@@ -1,9 +1,11 @@
 name: once
 
-# Builds and tests an openai/codex commit with Once instead of plain Bazel,
-# using the tuist/codex-once Tuist project for the shared cache and run
-# reporting. Every runner starts with an empty local cache, so cache hits come
-# from Tuist. Once derives the graph from the repository Bazel workspace.
+# Builds and tests an openai/codex commit with Once, using the Cargo workspace
+# under `codex-rs` as the graph. This is the Cargo-native path: Once derives
+# every crate, binary, and test from Cargo rather than loading the repository
+# Bazel workspace. The shared cache and run reporting go to the
+# tuist/codex-once Tuist project. Plain Bazel is the separate codex-bazel
+# workflow.
 
 on:
   workflow_call:
@@ -20,10 +22,10 @@ on:
         default: false
       build_target:
         type: string
-        default: bz_codex-rs_ansi-escape_ansi-escape
+        default: cargo_codex_cli_bin_codex
       test_target:
         type: string
-        default: bz_codex-rs_ansi-escape_ansi-escape-unit-tests
+        default: cargo_codex_ansi_escape_unit_tests
   workflow_dispatch:
     inputs:
       ref:
@@ -39,20 +41,18 @@ on:
         type: boolean
         default: false
       build_target:
-        description: Once target id to build
+        description: Once Cargo target id to build
         type: string
-        default: bz_codex-rs_ansi-escape_ansi-escape
+        default: cargo_codex_cli_bin_codex
       test_target:
-        description: Once target id to test
+        description: Once Cargo target id to test
         type: string
-        default: bz_codex-rs_ansi-escape_ansi-escape-unit-tests
+        default: cargo_codex_ansi_escape_unit_tests
 
 permissions: {}
 
 env:
   ONCE_VERSION: 0.62.3
-  BAZELISK_VERSION: 1.29.0
-  TUIST_VERSION: 4.210.0
 
 jobs:
   once:
@@ -81,22 +81,6 @@ jobs:
           ref: ${{ inputs.ref }}
           path: codex
           persist-credentials: false
-      - name: Install Bazelisk
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          case "${RUNNER_OS}-${RUNNER_ARCH}" in
-            Linux-X64) asset=bazelisk-linux-amd64 ;;
-            Linux-ARM64) asset=bazelisk-linux-arm64 ;;
-            macOS-ARM64) asset=bazelisk-darwin-arm64 ;;
-            macOS-X64) asset=bazelisk-darwin-amd64 ;;
-          esac
-          mkdir -p "${RUNNER_TEMP}/tools"
-          gh release download "v${BAZELISK_VERSION}" -R bazelbuild/bazelisk \
-            -p "${asset}" -O "${RUNNER_TEMP}/tools/bazel"
-          chmod +x "${RUNNER_TEMP}/tools/bazel"
-          echo "${RUNNER_TEMP}/tools" >> "$GITHUB_PATH"
       - name: Install Once
         env:
           GH_TOKEN: ${{ github.token }}
@@ -112,31 +96,17 @@ jobs:
           gh release download "${ONCE_VERSION}" -R tuist/once \
             -p "once-${ONCE_VERSION}-${triple}.tar.gz" -O - | tar xz -C "${RUNNER_TEMP}/once"
           echo "${RUNNER_TEMP}/once" >> "$GITHUB_PATH"
-      - name: Install tuist
+      - name: Install the Rust toolchain
+        working-directory: codex/codex-rs
         run: |
           set -euo pipefail
-          case "${RUNNER_OS}-${RUNNER_ARCH}" in
-            Linux-X64) asset=tuist-linux-x86_64.tar.gz ;;
-            Linux-ARM64) asset=tuist-linux-aarch64.tar.gz ;;
-            macOS-*) asset=tuist.zip ;;
-          esac
-          mkdir -p "${RUNNER_TEMP}/tuist"
-          curl -fsSL "https://github.com/tuist/tuist/releases/download/${TUIST_VERSION}/${asset}" \
-            -o "${RUNNER_TEMP}/tuist/${asset}"
-          case "${asset}" in
-            *.zip) unzip -o -q "${RUNNER_TEMP}/tuist/${asset}" -d "${RUNNER_TEMP}/tuist" ;;
-            *) tar xzf "${RUNNER_TEMP}/tuist/${asset}" -C "${RUNNER_TEMP}/tuist" ;;
-          esac
-          chmod +x "${RUNNER_TEMP}/tuist/tuist"
-          echo "${RUNNER_TEMP}/tuist" >> "$GITHUB_PATH"
-      - name: Install DotSlash and just
-        uses: facebook/install-dotslash@v2
-      - uses: taiki-e/install-action@v2
-        with:
-          tool: just
-      - name: Install C/C++ toolchain (Linux)
+          channel="$(sed -n 's/^channel = "\(.*\)"/\1/p' rust-toolchain.toml)"
+          rustup toolchain install "${channel}" --profile minimal
+          rustup toolchain install stable --profile minimal
+          cargo --version
+      - name: Install C/C++ build tools (Linux)
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends build-essential clang cmake pkg-config
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends build-essential clang cmake pkg-config libssl-dev
       - name: Apply the overlay
         working-directory: codex
         env:
@@ -144,33 +114,15 @@ jobs:
         run: |
           set -euo pipefail
           if [ "${REMOTE_CACHE}" = "true" ]; then
-            cp ../overlay/overlay/once.toml once.toml
-            cp ../overlay/overlay/tuist-once.toml tuist.toml
+            cp ../overlay/overlay/once.toml codex-rs/once.toml
           fi
           echo "CODEX_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
-      - name: Authenticate the tuist CLI
-        if: inputs.remote_cache
-        working-directory: codex
-        run: tuist auth login
-      - name: Point the underlying Bazel at the Tuist remote cache
-        if: inputs.remote_cache
-        working-directory: codex
-        continue-on-error: true
-        # Once delegates Bazel action caching to Bazel, so configure the
-        # remote cache without build insights: the Once run is the insight.
-        run: |
-          tuist bazel setup --no-build-insights
-          # See codex-bazel.yml: codex's inactive buildbuddy-* configs make
-          # `tuist bazel setup` skip the import, so add it explicitly.
-          if [ -f .bazelrc.tuist ] && ! grep -q 'try-import %workspace%/.bazelrc.tuist' .bazelrc; then
-            echo 'try-import %workspace%/.bazelrc.tuist' >> .bazelrc
-          fi
       - name: Authenticate Once with Tuist
         if: inputs.remote_cache
-        working-directory: codex
+        working-directory: codex/codex-rs
         run: once auth login --provider tuist --no-browser
       - name: Load the graph
-        working-directory: codex
+        working-directory: codex/codex-rs
         run: |
           set -o pipefail
           start=$(date +%s)
@@ -178,14 +130,14 @@ jobs:
           echo "GRAPH_SECONDS=$(( $(date +%s) - start ))" >> "$GITHUB_ENV"
           grep -c '^  ' "${RUNNER_TEMP}/targets.txt" || true
       - name: once build
-        working-directory: codex
+        working-directory: codex/codex-rs
         run: |
           set -o pipefail
           start=$(date +%s)
           once build "${{ inputs.build_target }}" 2>&1 | tee "${RUNNER_TEMP}/build.log"
           echo "BUILD_SECONDS=$(( $(date +%s) - start ))" >> "$GITHUB_ENV"
       - name: once test
-        working-directory: codex
+        working-directory: codex/codex-rs
         run: |
           set -o pipefail
           start=$(date +%s)
@@ -199,7 +151,7 @@ jobs:
           REMOTE_CACHE: ${{ inputs.remote_cache }}
         run: |
           {
-            echo "## Once on \`${{ matrix.os }}\` for openai/codex@${CODEX_SHA:0:10}"
+            echo "## Once (Cargo) on \`${{ matrix.os }}\` for openai/codex@${CODEX_SHA:0:10}"
             echo
             echo "Remote cache: **${REMOTE_CACHE}**"
             echo

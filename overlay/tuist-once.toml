@@ -1,7 +1,0 @@
-# Copied into the openai/codex checkout by .github/workflows/once.yml.
-# Once delegates the caching of Bazel actions to Bazel itself, so this file
-# points the underlying `bazel` invocations at the tuist/codex-once remote
-# cache. The Once run reporting goes to the same project through once.toml.
-
-project = "tuist/codex-once"
-url = "https://tuist.dev"
